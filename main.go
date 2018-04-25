@@ -1,7 +1,7 @@
 package main
 
-// TODO: Urfave CLI and commands
-// TODO: command startNode
+// DONE: Urfave CLI and commands
+// DONE: command startNode
 
 import (
 	"os"
