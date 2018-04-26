@@ -1,10 +1,22 @@
 package main
 
 // DOING: Node struct
+
+//// P2P Network feature
 // DOING: Add P2P Logic (separate module?)
+// DONE: Add address
 // TODO: Add Node sync
+// TODO: Docker network &
+//       Quicker discovering (or another approach for adding nodes to P2P network)
+// TODO: Add removing node from knownNodes (discoverPeers)
 // TODO: P2P commands, protocol?
+
+//// REST API feature
 // TODO: Add REST API Logic (separate module?)
+// TODO: Add REST API endpoint POST File
+// TODO: & Rule for POST File: Files are never stored in the store of the peer who uploaded the file
+// TODO: Add REST API endpoint GET File
+// TODO: & Rule for GET File: Files are available only from the peer from which it was downloaded
 
 import (
 	"bytes"
@@ -14,14 +26,16 @@ import (
 	"io/ioutil"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
-const IPADDRESS = "localhost"
 const PROTOCOL = "tcp"
 const COMMAND_LENGTH = 12
-const NEAREST = 10
-const DISCOVER_INTERVAL = 15 * time.Second
+const DISCOVER_INTERVAL = 30 * time.Second
+const TIME_FORMAT = "15:04:05.000"
+
+var timeStamp = func() string { return time.Now().Format(TIME_FORMAT) }
 
 type ping struct {
 	From string
@@ -32,25 +46,25 @@ type pong struct {
 }
 
 type Node struct {
-	Id         int
+	Id         string
 	Address    string
 	Port       int
 	knownNodes []string
 	conn       net.Conn
 }
 
-func NewNode(port int) *Node {
-	address := IPADDRESS + ":" + strconv.Itoa(port)
+func NewNode(address string, port int) *Node {
+	fullAddress := address + ":" + strconv.Itoa(port)
 	return &Node{
-		Id:         port,
+		Id:         fullAddress,
 		Address:    address,
 		Port:       port,
-		knownNodes: []string{address},
+		knownNodes: []string{fullAddress},
 	}
 }
 
 func (node *Node) Run() {
-	ln, err := net.Listen(PROTOCOL, node.Address)
+	ln, err := net.Listen(PROTOCOL, node.Id)
 	if err != nil {
 		Warn.Println(err)
 	}
@@ -68,7 +82,7 @@ func (node *Node) Run() {
 	}
 }
 
-func (node Node) isKnown(address string) bool {
+func (node *Node) isKnown(address string) bool {
 	for _, node := range node.knownNodes {
 		if node == address {
 			return true
@@ -79,20 +93,15 @@ func (node Node) isKnown(address string) bool {
 
 func (node *Node) discoverPeers() {
 	// discover nearest peers
-	discover := time.NewTimer(DISCOVER_INTERVAL)
+	time.Sleep(time.Second)
+	node.discoverPeersTick()
 
+	discover := time.NewTimer(DISCOVER_INTERVAL)
 	for {
 		select {
 		case <-discover.C:
-			for port := (node.Port - NEAREST); port <= (node.Port + NEAREST); port++ {
-				address := IPADDRESS + ":" + strconv.Itoa(port)
-				if !node.isKnown(address) {
-					// ping to this address
-					node.sendPing(address)
-				}
-			}
-			//discover.Reset(DISCOVER_INTERVAL)
-
+			node.discoverPeersTick()
+			discover.Reset(DISCOVER_INTERVAL)
 			// TODO: when Node will close
 			//case <-node.closed:
 			//	return
@@ -101,7 +110,33 @@ func (node *Node) discoverPeers() {
 
 }
 
-func (node Node) handleConnection(conn net.Conn) {
+func (node *Node) discoverPeersTick() {
+	Info.Printf("%s: Discovering start...", timeStamp())
+	// prepare request
+	payload := gobEncode(ping{node.Id})
+	pingRequest := append(commandToBytes("ping"), payload...)
+
+	// FIXME: Docker networks workaround
+	lastIPFrom := 2
+	lastIPTo := 6
+	portFrom := 5000
+	portTo := 5005
+	// from x.x.x.2:5000 to x.x.x.6:5005
+	for lastIP := lastIPFrom; lastIP <= lastIPTo; lastIP++ {
+		addressBaseIdx := strings.LastIndex(node.Address, ".")
+		for port := portFrom; port <= portTo; port++ {
+			address := node.Address[0:addressBaseIdx+1] +
+				strconv.Itoa(lastIP) + ":" + strconv.Itoa(port)
+			if !node.isKnown(address) {
+				// ping to this address
+				node.sendPing(address, pingRequest)
+			}
+		}
+	}
+	Info.Printf("%s: Discovering finish...", timeStamp())
+}
+
+func (node *Node) handleConnection(conn net.Conn) {
 	request, err := ioutil.ReadAll(conn)
 	if err != nil {
 		Warn.Println(err)
@@ -120,7 +155,7 @@ func (node Node) handleConnection(conn net.Conn) {
 	conn.Close()
 }
 
-func (node Node) handlePing(request []byte) {
+func (node *Node) handlePing(request []byte) {
 	var buffer bytes.Buffer
 	var pingPayload ping
 
@@ -134,7 +169,7 @@ func (node Node) handlePing(request []byte) {
 	node.sendPong(pingPayload.From)
 }
 
-func (node Node) handlePong(request []byte) {
+func (node *Node) handlePong(request []byte) {
 	var buffer bytes.Buffer
 	var pongPayload pong
 
@@ -146,21 +181,22 @@ func (node Node) handlePong(request []byte) {
 	}
 
 	if !node.isKnown(pongPayload.From) {
-		Info.Printf("New Peer Node is connected: %s\n", pongPayload.From)
+		Info.Printf("%s: New Peer Node is connected: %s\n", timeStamp(), pongPayload.From)
 		node.knownNodes = append(node.knownNodes, pongPayload.From)
+		Info.Printf("All Known Nodes: %v\n", node.knownNodes)
 	}
 }
 
-func (node Node) sendData(address string, data []byte) bool {
-	Debug.Printf("Dial to: %s\n", address)
+func (node *Node) sendData(address string, data []byte) bool {
+	//Debug.Printf("Dial to: %s\n", address)
 	conn, err := net.Dial(PROTOCOL, address)
 	if err != nil {
-		Debug.Printf("%s is not available\n", address)
+		Debug.Printf("%s: %s is not available\n", timeStamp(), address)
 		return false
 	}
 	defer conn.Close()
 
-	Debug.Printf("Send data: %x\n", data)
+	Debug.Printf("Send data to address [%s]: %x\n", address, data)
 	_, err = io.Copy(conn, bytes.NewReader(data))
 	if err != nil {
 		Warn.Println(err)
@@ -169,15 +205,13 @@ func (node Node) sendData(address string, data []byte) bool {
 	return true
 }
 
-func (node Node) sendPing(address string) bool {
-	payload := gobEncode(ping{node.Address})
-	request := append(commandToBytes("ping"), payload...)
-	Debug.Printf("PING: %s\n", address)
+func (node *Node) sendPing(address string, request []byte) bool {
+	//Debug.Printf("PING: %s... ", address)
 	return node.sendData(address, request)
 }
 
-func (node Node) sendPong(address string) bool {
-	payload := gobEncode(pong{node.Address})
+func (node *Node) sendPong(address string) bool {
+	payload := gobEncode(pong{node.Id})
 	request := append(commandToBytes("pong"), payload...)
 	Info.Printf("PONG: %s\n", address)
 	return node.sendData(address, request)

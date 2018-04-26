@@ -1,0 +1,41 @@
+version: "3"
+services:
+
+  filelogger0:
+    build:
+      context: .
+      args:
+        app_address: docker
+        app_port: 5000
+    container_name: filelogger0
+    ports:
+      - "5000:5000"
+    networks:
+      - hostnet
+
+  filelogger1:
+    build:
+      context: .
+      args:
+        app_address: docker
+        app_port: 5001
+    container_name: filelogger1
+    ports:
+      - "5001:5000"
+    networks:
+      - hostnet
+
+  filelogger2:
+    build:
+      context: .
+      args:
+        app_address: docker
+        app_port: 5002
+    container_name: filelogger2
+    ports:
+      - "5002:5000"
+    networks:
+      - hostnet
+
+networks:
+  hostnet:

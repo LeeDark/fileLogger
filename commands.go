@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/urfave/cli"
@@ -19,6 +20,11 @@ var Commands = []cli.Command{
 		Name:    "start",
 		Aliases: []string{"s"},
 		Flags: []cli.Flag{
+			cli.StringFlag{
+				Name:  "address",
+				Value: "127.0.0.1",
+				Usage: "address of peer-node for P2P network",
+			},
 			cli.IntFlag{
 				Name:  "port",
 				Value: 5000,
@@ -45,9 +51,24 @@ func CommandBefore(c *cli.Context) error {
 }
 
 func CmdStartNode(c *cli.Context) (err error) {
+	// FIXME: Docker networks workaround
+	name, err := os.Hostname()
+	if err != nil {
+		Debug.Printf("Error: %v\n", err)
+		return err
+	}
+	addrs, err := net.LookupHost(name)
+	if err != nil {
+		Debug.Printf("Error: %v\n", err)
+		return err
+	}
+	address := c.String("address")
+	if address == "docker" {
+		address = addrs[0]
+	}
 	port := c.Int("port")
-	Info.Println("Start Node with port:", port)
-	node := NewNode(port)
+	Info.Printf("Start Node %s:%d", address, port)
+	node := NewNode(address, port)
 	node.Run()
 	return nil
 }
