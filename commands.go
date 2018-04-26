@@ -45,6 +45,9 @@ func CommandBefore(c *cli.Context) error {
 }
 
 func CmdStartNode(c *cli.Context) (err error) {
-	Debug.Println("Start Node with port:", c.Int("port"))
+	port := c.Int("port")
+	Info.Println("Start Node with port:", port)
+	node := NewNode(port)
+	node.Run()
 	return nil
 }
