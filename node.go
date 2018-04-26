@@ -5,16 +5,18 @@ package main
 //// P2P Network feature
 // DOING: Add P2P Logic (separate module?)
 // DONE: Add address
-// TODO: Add Node sync
+// DOING: Add Node sync
 // TODO: Docker network &
 //       Quicker discovering (or another approach for adding nodes to P2P network)
-// TODO: Add removing node from knownNodes (discoverPeers)
-// TODO: P2P commands, protocol?
+// TODO: Add disconnecting/removing node from P2P network (knownNodes, discoverPeers)
+// TODO: P2P commands/messages, protocol, message queue?
+// TODO: PingLoop
 
 //// REST API feature
-// TODO: Add REST API Logic (separate module?)
-// TODO: Add REST API endpoint POST File
-// TODO: & Rule for POST File: Files are never stored in the store of the peer who uploaded the file
+// DONE: Add REST API Logic (separate module?)
+// TODO-1: Add REST API endpoint POST File
+// TODO-2: & Store File to folder with name {Node.Address}_{Node.Port}
+// TODO-3: & Rule for POST File: Files are never stored in the store of the peer who uploaded the file
 // TODO: Add REST API endpoint GET File
 // TODO: & Rule for GET File: Files are available only from the peer from which it was downloaded
 
@@ -51,34 +53,77 @@ type Node struct {
 	Port       int
 	knownNodes []string
 	conn       net.Conn
+	closed     chan struct{}
+	disconnect chan error
+
+	// REST service
+	rest *RestService
 }
 
 func NewNode(address string, port int) *Node {
 	fullAddress := address + ":" + strconv.Itoa(port)
+	// HACK: for terminal testing addresses are equal, we can use different ports
+	var restAddress string
+	if address == PEER_IP_DEFAULT {
+		// REST API port = port + (5100-5000)
+		restAddress = address + ":" + strconv.Itoa(port+REST_PORT-PEER_PORT_DEFAULT)
+	} else {
+		restAddress = address + ":" + strconv.Itoa(REST_PORT)
+	}
+
 	return &Node{
 		Id:         fullAddress,
 		Address:    address,
 		Port:       port,
 		knownNodes: []string{fullAddress},
+		closed:     make(chan struct{}),
+		disconnect: make(chan error),
+		rest:       NewRestService(restAddress),
 	}
 }
 
 func (node *Node) Run() {
+	// REST API Service
+	if err := node.rest.Start(); err != nil {
+		Warn.Printf("Failed to start REST API service: %s", err.Error())
+	} else {
+		Info.Printf("Start REST API Service %s", node.rest.address)
+	}
+
+	// P2P Network
 	ln, err := net.Listen(PROTOCOL, node.Id)
 	if err != nil {
 		Warn.Println(err)
 	}
 	go node.discoverPeers()
+
+	// FIXME: can we create permanent connection?
 	// simple loop
+loop:
 	for {
 		Debug.Println("Simple Loop")
 		node.conn, err = ln.Accept()
 		if err != nil {
 			Debug.Println(err)
-			break
+			break loop
 		}
 		Debug.Println("Handle Connection")
 		go node.handleConnection(node.conn)
+
+		// disconnect
+		select {
+		case err = <-node.disconnect:
+			break loop
+		}
+	}
+
+	close(node.closed)
+}
+
+func (node *Node) Disconnect(reason string) {
+	select {
+	case node.disconnect <- fmt.Errorf("Disconnect reason: %s", reason):
+	case <-node.closed:
 	}
 }
 
@@ -102,9 +147,8 @@ func (node *Node) discoverPeers() {
 		case <-discover.C:
 			node.discoverPeersTick()
 			discover.Reset(DISCOVER_INTERVAL)
-			// TODO: when Node will close
-			//case <-node.closed:
-			//	return
+		case <-node.closed:
+			return
 		}
 	}
 
@@ -136,14 +180,16 @@ func (node *Node) discoverPeersTick() {
 	Info.Printf("%s: Discovering finish...", timeStamp())
 }
 
-func (node *Node) handleConnection(conn net.Conn) {
+func (node *Node) handleConnection(conn net.Conn) error {
 	request, err := ioutil.ReadAll(conn)
 	if err != nil {
 		Warn.Println(err)
+		return err
 	}
 	Debug.Printf("Request: %x\n", request)
 	command := bytesToCommand(request[:COMMAND_LENGTH])
 	Info.Printf("COMMAND: %s\n", command)
+
 	switch command {
 	case "ping":
 		node.handlePing(request)
@@ -153,6 +199,7 @@ func (node *Node) handleConnection(conn net.Conn) {
 		Info.Printf("Unknown command: %s!\n", command)
 	}
 	conn.Close()
+	return nil
 }
 
 func (node *Node) handlePing(request []byte) {

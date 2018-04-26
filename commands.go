@@ -8,6 +8,9 @@ import (
 	"github.com/urfave/cli"
 )
 
+const PEER_IP_DEFAULT = "127.0.0.1"
+const PEER_PORT_DEFAULT = 5000
+
 var GlobalFlags = []cli.Flag{
 	cli.BoolFlag{
 		Name:  "debug",
@@ -22,12 +25,12 @@ var Commands = []cli.Command{
 		Flags: []cli.Flag{
 			cli.StringFlag{
 				Name:  "address",
-				Value: "127.0.0.1",
+				Value: PEER_IP_DEFAULT,
 				Usage: "address of peer-node for P2P network",
 			},
 			cli.IntFlag{
 				Name:  "port",
-				Value: 5000,
+				Value: PEER_PORT_DEFAULT,
 				Usage: "port of peer-node for P2P network",
 			},
 		},
