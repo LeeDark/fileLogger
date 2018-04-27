@@ -28,19 +28,15 @@ func displayAppError(w http.ResponseWriter, handlerError error, message string, 
 		HttpStatus: code,
 		ExitCode:   exitCode,
 	}
-
 	if handlerError != nil {
 		errObj.Error = handlerError.Error()
 	}
-
 	fmt.Printf("[app error]: %s\n", handlerError)
-
 	respondWithJSON(w, code, errorResource{Data: errObj})
 }
 
 func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	response, _ := json.Marshal(payload)
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	w.Write(response)

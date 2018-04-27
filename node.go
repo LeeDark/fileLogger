@@ -57,7 +57,7 @@ type Node struct {
 	disconnect chan error
 
 	// REST service
-	rest *RestService
+	restService *RestService
 }
 
 func NewNode(address string, port int) *Node {
@@ -72,22 +72,22 @@ func NewNode(address string, port int) *Node {
 	}
 
 	return &Node{
-		Id:         fullAddress,
-		Address:    address,
-		Port:       port,
-		knownNodes: []string{fullAddress},
-		closed:     make(chan struct{}),
-		disconnect: make(chan error),
-		rest:       NewRestService(restAddress),
+		Id:          fullAddress,
+		Address:     address,
+		Port:        port,
+		knownNodes:  []string{fullAddress},
+		closed:      make(chan struct{}),
+		disconnect:  make(chan error),
+		restService: NewRestService(restAddress),
 	}
 }
 
 func (node *Node) Run() {
 	// REST API Service
-	if err := node.rest.Start(); err != nil {
+	if err := node.restService.Start(); err != nil {
 		Warn.Printf("Failed to start REST API service: %s", err.Error())
 	} else {
-		Info.Printf("Start REST API Service %s", node.rest.address)
+		Info.Printf("Start REST API Service %s", node.restService.address)
 	}
 
 	// P2P Network
@@ -137,8 +137,9 @@ func (node *Node) isKnown(address string) bool {
 }
 
 func (node *Node) discoverPeers() {
-	// discover nearest peers
+	// HACK: wait 1 second before start discovering
 	time.Sleep(time.Second)
+	// discover nearest peers
 	node.discoverPeersTick()
 
 	discover := time.NewTimer(DISCOVER_INTERVAL)
@@ -161,11 +162,11 @@ func (node *Node) discoverPeersTick() {
 	pingRequest := append(commandToBytes("ping"), payload...)
 
 	// FIXME: Docker networks workaround
+	// from x.x.x.2:5000 to x.x.x.6:5005
 	lastIPFrom := 2
 	lastIPTo := 6
 	portFrom := 5000
 	portTo := 5005
-	// from x.x.x.2:5000 to x.x.x.6:5005
 	for lastIP := lastIPFrom; lastIP <= lastIPTo; lastIP++ {
 		addressBaseIdx := strings.LastIndex(node.Address, ".")
 		for port := portFrom; port <= portTo; port++ {
@@ -268,23 +269,19 @@ func (node *Node) sendPong(address string) bool {
 
 func commandToBytes(command string) []byte {
 	var bytes [COMMAND_LENGTH]byte
-
 	for i, c := range command {
 		bytes[i] = byte(c)
 	}
-
 	return bytes[:]
 }
 
 func bytesToCommand(bytes []byte) string {
 	var command []byte
-
 	for _, b := range bytes {
 		if b != 0x0 {
 			command = append(command, b)
 		}
 	}
-
 	return fmt.Sprintf("%s", command)
 }
 
@@ -294,12 +291,10 @@ func extractCommand(request []byte) []byte {
 
 func gobEncode(data interface{}) []byte {
 	var buff bytes.Buffer
-
 	enc := gob.NewEncoder(&buff)
 	err := enc.Encode(data)
 	if err != nil {
 		Warn.Println(err)
 	}
-
 	return buff.Bytes()
 }

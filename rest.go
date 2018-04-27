@@ -58,6 +58,7 @@ func (s *RestService) Start() error {
 		if err != nil {
 			Info.Printf("HTTP serve: %s", err)
 		}
+		// FIXME
 		//shutdown <- 1
 	}()
 
